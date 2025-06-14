@@ -100,6 +100,6 @@ Sprites from:
 ## 📦 Download
 Want to try it without installing Python?
 
-👉 [Download the latest .exe](https://github.com/your-username/desktop-spirit/releases/latest](https://github.com/HexHawkeye/symmetrical-octo-spork/releases/tag/v1.0.0) from the Releases page.
+👉 [Download the latest .exe](https://github.com/HexHawkeye/symmetrical-octo-spork/releases/tag/v1.0.0) from the Releases page.
 
 
