@@ -26,7 +26,7 @@ Built using **PyQt5**, this customizable character interacts with your mouse and
 
 Install dependencies using pip:
 
-```bash
+bash
 pip install PyQt5 Pillow
 
  📁 Setup
