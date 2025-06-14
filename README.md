@@ -18,7 +18,8 @@ A playful animated sprite that walks, jumps, climbs, attacks, and reacts on your
 - ❤️ Health bar above sprite
 
 ---
-![free-pixel-art-tiny-hero-sprites](https://github.com/user-attachments/assets/e1622a98-40a5-44f4-be1f-834a6b9a2863)
+![free-pixel-art-tiny-hero-sprites](https://github.com/user-attachments/assets/23c40626-bade-495c-8856-a30a93c0ab9e)
+
 
 ## 🛠 Requirements
 
