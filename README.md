@@ -33,7 +33,7 @@ pip install PyQt5 Pillow
 
     Clone the repository
 
-git clone https://github.com/your-username/desktop-spirit.git
+git clone (https://github.com/HexHawkeye/symmetrical-octo-spork.git)
 cd desktop-spirit
 
     Add sprite folders
