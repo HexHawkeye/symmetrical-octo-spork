@@ -14,6 +14,14 @@ def handle_exception(exc_type, exc_value, exc_traceback):
             return
         print("[UNCAUGHT EXCEPTION]")
         traceback.print_exception(exc_type, exc_value, exc_traceback)
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and PyInstaller """
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+base_path = resource_path("tiny-hero-sprites")
+icon_path = resource_path("icon.ico")
+
 
 sys.excepthook = handle_exception
 
@@ -480,7 +488,8 @@ if __name__ == "__main__":
 
     # === Monster selection ===
     monster_list = ["Pink_Monster", "Owlet_Monster", "Dude_Monster"]
-    monster = random.choice(monster_list)
+    selected_monster = os.environ.get("SPIRIT_CHARACTER", "RANDOM")
+    monster = random.choice(monster_list) if selected_monster == "RANDOM" else selected_monster
     print(f"[INFO] Loaded spirit: {monster}")
 
     # === Asset path setup ===
@@ -488,6 +497,7 @@ if __name__ == "__main__":
 
     def sprite_path(action, frame_count):
         return os.path.join(base_path, f"{monster}/{monster}_{action}_{frame_count}.png")
+
 
     # === Animations dictionary ===
     animations = {
@@ -516,26 +526,45 @@ if __name__ == "__main__":
     print("[DEBUG] Health bar pos:", spirit.health_bar.x(), spirit.health_bar.y())
     # === Create system tray icon ===
     tray_icon = QSystemTrayIcon()
-    tray_icon.setIcon(QIcon(os.path.join(os.path.dirname(__file__), "icon.png")))
+    tray_icon.setIcon(QIcon(icon_path))  # Use resource path here
     tray_icon.setVisible(True)
     tray_icon.showMessage("Desktop Spirit", f"{monster.replace('_', ' ')} is active!", QSystemTrayIcon.Information, 3000)
 
     # === Tray menu ===
     tray_menu = QMenu()
 
-    quit_action = QAction("Quit")
-    quit_action.triggered.connect(app.quit)
+    # === Character Selection Submenu ===
+    character_menu = QMenu("Change Character")
+    monster_list = ["Pink_Monster", "Owlet_Monster", "Dude_Monster"]
 
-    change_character_action = QAction("Change Character")
-    def change_character():
-        os.execl(sys.executable, sys.executable, *sys.argv)
+    def make_switch_character(monster_name):
+        def switch():
+            os.environ["SPIRIT_CHARACTER"] = monster_name
+            os.execl(sys.executable, sys.executable, *sys.argv)
+        return switch
 
-    change_character_action.triggered.connect(change_character)
+    # Add each monster to the character submenu
+    for name in monster_list:
+        display_name = name.replace("_", " ")
+        action = QAction(display_name, tray_menu)
+        action.triggered.connect(make_switch_character(name))
+        character_menu.addAction(action)
 
-    tray_menu.addAction(change_character_action)
+    # Add random option
+    random_action = QAction("Random", tray_menu)
+    random_action.triggered.connect(make_switch_character("RANDOM"))
+    character_menu.addAction(random_action)
+
+    # Add the character menu to the tray
+    tray_menu.addMenu(character_menu)
+
+    # === Quit Action ===
     tray_menu.addSeparator()
+    quit_action = QAction("Quit", tray_menu)
+    quit_action.triggered.connect(QApplication.quit)
     tray_menu.addAction(quit_action)
 
+    # === Assign menu to tray icon ===
     tray_icon.setContextMenu(tray_menu)
 
     # === Start application ===
