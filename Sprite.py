@@ -2,11 +2,20 @@ import sys
 import os
 import random
 import time 
+import traceback
 from PyQt5.QtWidgets import QApplication, QLabel, QSystemTrayIcon, QMenu, QAction
 from PyQt5.QtGui import QPixmap, QTransform, QIcon
 from PyQt5.QtCore import Qt, QTimer, QRect
 from PyQt5 import QtGui
 
+def handle_exception(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        print("[UNCAUGHT EXCEPTION]")
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
+
+sys.excepthook = handle_exception
 
 class Spirit(QLabel):
     def __init__(self, frame_width, frame_height, animations, start_state="walk", frame_delay=150):
@@ -27,6 +36,7 @@ class Spirit(QLabel):
         self.previous_state = None
         self.locked = False  # locks state switching
         self.mouse_over = False
+        self.can_attack = True
         # Timers
         self.animation_timer = QTimer()
         self.animation_timer.timeout.connect(self.update_frame)
@@ -43,11 +53,19 @@ class Spirit(QLabel):
         self.climb_check_timer.start(3000)
         self.click_times = []
 
+        self.drag_start_time = None
+        self.drag_start_pos = None
+
         self.health_bar = QLabel(self)
-        self.health_bar.move(0, self.frame_height + 2)
+        self.health_bar.setVisible(True)
         self.max_health = 5
         self.health = self.max_health
         self.update_health_bar()
+
+        self.heal_timer = QTimer()
+        self.heal_timer.setSingleShot(True)
+        self.heal_timer.timeout.connect(self.restore_health)
+
 
         # Start state
         self.set_state(start_state)
@@ -57,56 +75,77 @@ class Spirit(QLabel):
         bar_height = 5
         full_width = self.frame_width
         health_ratio = self.health / self.max_health
-        bar_width = max(1, int(full_width * health_ratio))  # avoid 0 width
+        bar_width = max(1, int(full_width * health_ratio))  # Never 0
 
-        # Create the bar pixmap
+        # Create transparent pixmap
         pixmap = QPixmap(full_width, bar_height)
         pixmap.fill(Qt.transparent)
 
+        # Paint the health bar
         painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
         painter.setBrush(Qt.red)
         painter.setPen(Qt.NoPen)
         painter.drawRect(0, 0, bar_width, bar_height)
         painter.end()
 
-        # Set it on the health bar QLabel
+        # Update QLabel
         self.health_bar.setPixmap(pixmap)
         self.health_bar.setFixedSize(full_width, bar_height)
-        self.health_bar.move(0, -bar_height - 4)
-        self.health_bar.raise_()  # <- bring to front!
-        self.health_bar.show()
+        self.health_bar.move(0, 2)   # Move it *above* the sprite
+        self.health_bar.raise_()
+        self.health_bar.setVisible(True)
+        self.health_bar.raise_()
 
+        
+        
+    def closeEvent(self, event):
+        print("[DEBUG] Spirit closing. Timer active:", self.heal_timer.isActive())
+        super().closeEvent(event)
 
     def enterEvent(self, event):
-        if self.locked or self.mouse_over:
+        if self.locked or self.mouse_over or not self.can_attack or self.state == "hurt":
             return
 
         self.mouse_over = True
+        self.can_attack = False  # disable until reset
 
         if self.state == "walk":
             self.set_state("walk_attack")
-            QTimer.singleShot(700, lambda: self.set_state("walk"))
+            QTimer.singleShot(700, lambda: self.resume_from_attack("walk"))
 
         elif self.state == "run":
             self.set_state("walk_attack")
-            QTimer.singleShot(700, lambda: self.set_state("run"))
+            QTimer.singleShot(700, lambda: self.resume_from_attack("run"))
 
         else:
             attack_state = random.choice(["attack1", "attack2"])
             previous = self.state if self.state in ("walk", "run") else "walk"
             self.set_state(attack_state)
-            QTimer.singleShot(700, lambda: self.set_state(previous))
+            QTimer.singleShot(700, lambda: self.resume_from_attack(previous))
+
+    def resume_from_attack(self, next_state):
+        if self.locked or self.state in ("hurt", "death"):
+            return  # Don't change state during hurt/death
+        self.set_state(next_state)
+        QTimer.singleShot(1000, lambda: setattr(self, 'can_attack', True))
+
+    def restore_state(self):
+        if not self.locked and self.previous_state:
+            self.set_state(self.previous_state)
 
     def leaveEvent(self, event):
         self.mouse_over = False
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            self.drag_start_time = time.time()
+            self.drag_start_pos = event.globalPos()
             self.dragging = True
             self.drag_offset = event.pos()
             self.setWindowOpacity(0.7)
 
-            # Pause movement and climbing/falling logic
+            # Stop movement and fall/climb
             self.move_timer.stop()
             if hasattr(self, 'climb_timer') and self.climb_timer.isActive():
                 self.climb_timer.stop()
@@ -115,22 +154,61 @@ class Spirit(QLabel):
             if hasattr(self, 'fall_timer') and self.fall_timer.isActive():
                 self.fall_timer.stop()
 
-            self.locked = True  # lock all state changes while dragging
-            return
+            self.locked = True
 
 
     def mouseMoveEvent(self, event):
         if getattr(self, 'dragging', False):
             self.move(self.mapToGlobal(event.pos() - self.drag_offset))
+            self.update_health_bar()  # Update health bar position
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.dragging = False
             self.setWindowOpacity(1.0)
 
-            self.locked = True
-            self.set_state("idle")
-            self.start_falling()  # this now handles the fall correctly
+            end_time = time.time()
+            end_pos = event.globalPos()
+
+            time_diff = end_time - getattr(self, 'drag_start_time', 0)
+            dist = (end_pos - getattr(self, 'drag_start_pos', event.globalPos())).manhattanLength()
+
+            if time_diff < 0.3 and dist < 10:
+                # Treat as a click: apply damage
+                self.health -= 1
+                self.update_health_bar()
+                self.heal_timer.start(10000)  # 10 seconds
+
+                if self.health <= 0:
+                    self.locked = False
+                    self.trigger_death_from_clicks()
+                    return
+
+                if  self.state not in ("hurt", "death"):
+                    self.locked = False
+                    saved_previous = self.state if self.state in ("walk", "run") else "walk"
+                    self.set_state("hurt")
+                    QTimer.singleShot(700, lambda: self.restore_after_hurt(saved_previous))
+
+            else:
+                self.set_state("idle")
+                self.start_falling()
+
+    def restore_health(self):
+        
+        
+        if self.health < self.max_health:
+            self.health = self.max_health
+            self.update_health_bar()
+            self.set_state("idle")  # or custom "heal" state
+            QTimer.singleShot(500, lambda: self.set_state("walk"))
+            
+
+    def restore_after_hurt(self, previous):
+        
+        self.locked = False  # Always unlock!
+        if self.state == "hurt":
+            self.set_state(previous)
 
     def trigger_death_from_clicks(self):
         if self.locked:
@@ -187,6 +265,7 @@ class Spirit(QLabel):
                 self.start_climbing_down()
         else:
             self.move(x, y)
+            self.update_health_bar()
 
     def start_climbing_down(self):
         self.climb_down_timer = QTimer()
@@ -203,6 +282,7 @@ class Spirit(QLabel):
             self.unlock_and_resume()
         else:
             self.move(x, y)
+            self.update_health_bar()
 
     def start_falling(self):
         self.fall_start_y = self.y()  # record where fall started
@@ -215,8 +295,8 @@ class Spirit(QLabel):
         y = self.y() + 6
         x = self.x()
         self.move(x, y)
+        self.update_health_bar()
 
-        # Calculate fall distance
         fall_distance = y - self.fall_start_y
         half_screen = screen.height() // 2
         bottom = screen.bottom() - self.frame_height - 50
@@ -228,7 +308,22 @@ class Spirit(QLabel):
                 self.set_state("death")
                 QTimer.singleShot(1200, self.reset_spirit)
             else:
-                self.unlock_and_resume()
+                if self.health > 0:
+                    self.health -= 1
+                    self.health = max(0, self.health)  # Clamp to 0
+                    self.update_health_bar()
+                    self.heal_timer.start(10000)
+                    
+
+                    if self.health == 0:
+                        self.locked = False
+                        self.trigger_death_from_clicks()
+                        return
+                    self.locked = False
+                    self.set_state("hurt")
+                    QTimer.singleShot(700, self.unlock_and_resume)
+
+
 
 
     def reset_spirit(self):
@@ -241,7 +336,12 @@ class Spirit(QLabel):
         x = screen.left() if self.direction == 1 else screen.right() - self.frame_width
         y = screen.bottom() - self.frame_height - 50
         self.move(x, y)
-        self.set_state("walk")
+        try:
+            self.set_state("walk")
+        except Exception as e:
+            print(f"[ERROR] Failed to reset state: {e}")
+            self.set_state("idle")
+        self.update_health_bar()
 
     def unlock_and_resume(self):
         self.locked = False
@@ -252,6 +352,7 @@ class Spirit(QLabel):
     def move_to_start(self):
         screen = self.screen_rect()
         self.move(0, screen.height() - self.frame_height - 50)
+        self.update_health_bar() 
 
     def screen_rect(self):
         pos = self.frameGeometry().center()
@@ -260,8 +361,18 @@ class Spirit(QLabel):
             return screen.availableGeometry()
         return QApplication.primaryScreen().availableGeometry()
 
+    def safe_set_state(self, state):
+        try:
+            self.set_state(state)
+        except Exception as e:
+            print(f"[ERROR] Failed to set state: {e}")
+            QTimer.singleShot(700, lambda: self.safe_set_state("walk"))
 
     def set_state(self, new_state):
+        if new_state not in self.animations:
+            print(f"[ERROR] Animation state '{new_state}' not found.")
+            return
+
         if self.locked and new_state != "death":
             return  # Prevent interruptions during death/climb
         
@@ -277,7 +388,14 @@ class Spirit(QLabel):
         self.state = new_state
         sprite_path, frame_count = self.animations[new_state]
 
-        pixmap = QPixmap(sprite_path)
+        try:
+            pixmap = QPixmap(sprite_path)
+            if pixmap.isNull():
+                raise FileNotFoundError(f"Missing sprite: {sprite_path}")
+        except Exception as e:
+            print(f"[ERROR] Failed to load sprite '{sprite_path}': {e}")
+            return
+
         self.frames = [
             pixmap.copy(QRect(i * self.frame_width, 0, self.frame_width, self.frame_height))
             for i in range(frame_count)
@@ -311,7 +429,8 @@ class Spirit(QLabel):
         x = self.x() + self.direction * (3 if self.state == "walk" else 6)
         y = screen.bottom() - self.frame_height - 50
         self.move(x, y)
-
+        self.update_health_bar()
+        
         if self.state in ("walk", "run"):
             mid_screen = (screen.left() + screen.right()) // 2
             if mid_screen - 10 < self.x() < mid_screen + 10 and random.random() < 0.05:
@@ -331,6 +450,13 @@ class Spirit(QLabel):
             self.set_state("idle")
             QTimer.singleShot(1000, lambda: self.flip_and_continue("run"))
         elif self.state == "run":
+            self.health -= 1
+            self.update_health_bar()
+            self.heal_timer.start(10000)  # 10 seconds
+            if self.health <= 0:
+                self.locked = False
+                self.trigger_death_from_clicks()
+                return
             self.set_state("hurt")
             QTimer.singleShot(1000, lambda: self.flip_and_continue("walk"))
 
@@ -386,7 +512,8 @@ if __name__ == "__main__":
     )
     spirit.show()
     spirit.update_health_bar()
-
+    print("[DEBUG] Sprite pos:", spirit.x(), spirit.y())
+    print("[DEBUG] Health bar pos:", spirit.health_bar.x(), spirit.health_bar.y())
     # === Create system tray icon ===
     tray_icon = QSystemTrayIcon()
     tray_icon.setIcon(QIcon(os.path.join(os.path.dirname(__file__), "icon.png")))
