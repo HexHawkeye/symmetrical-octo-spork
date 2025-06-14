@@ -91,7 +91,15 @@ pyinstaller Sprite.py --name SpriteApp --windowed --icon=icon.ico \
 📃 License
 MIT License. Free to modify, share, and use in personal projects.
 
+
 🙏 Credit
 Sprites from:
 🎨 craftpix.net — Free Pixel Art Tiny Hero Sprites
+
+
+## 📦 Download
+Want to try it without installing Python?
+
+👉 [Download the latest .exe](https://github.com/your-username/desktop-spirit/releases/latest](https://github.com/HexHawkeye/symmetrical-octo-spork/releases/tag/v1.0.0) from the Releases page.
+
 
